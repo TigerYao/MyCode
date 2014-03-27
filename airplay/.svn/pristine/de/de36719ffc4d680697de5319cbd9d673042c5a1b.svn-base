@@ -1,0 +1,412 @@
+package com.letv.airplay;
+
+import javax.jmdns.JmDNS;
+
+import android.app.Service;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.SharedPreferences;
+import android.content.SharedPreferences.Editor;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
+import android.net.wifi.WifiManager;
+import android.os.IBinder;
+import android.provider.Settings;
+import android.util.Log;
+import android.widget.Toast;
+
+/**
+ * 接收断网事件，从Java通过JNI调用C方法
+ * @author 李振
+ * @modify 韦念欣
+ */
+public class AirplayService extends Service {
+
+	private final String TAG = AirplayService.class.getSimpleName();
+
+	static final String ACTION_CONNECTIVITY_CHANGE 		= "android.net.conn.CONNECTIVITY_CHANGE";
+	static final String ACTION_WIFI_AP_STATE_CHANGED 	= "android.net.wifi.WIFI_AP_STATE_CHANGED";
+	static final String ACTION_ETH_STATE_CHANGED		= "android.net.ethernet.ETH_STATE_CHANGED";
+	static final String ACTION_CHANGE_NAME				= "com.letv.action.changeName";
+	static final String ACTION_MSS_CHANGE				= "com.letv.t2.globalsetting.multiscreenstatechange";
+	
+	public static final int PLAY 	= 0;
+	public static final int PAUSE	= 1;
+	public static final int STOP	= 2;
+	public static final int CACHE	= 3;
+
+	private boolean IsOn = false; //配置
+	private boolean SS = false;	//当前
+
+	private String name = null;
+	
+	AirplayMDNS jmdns= null; 
+	
+	SharedPreferences sp = null;
+	private final String ONOFF = "ONOFF_KEY"; 
+	private final int ON = 1;
+	private final int OFF = 0;
+	private final int EMPTY = 2;
+	private final int ERR = -1;
+	
+	private NetStateBroadCastReceiver netStateBroadCastReceiver;
+
+	public void startActivity(int appId, String mediaUrl, int percent, byte[] data) {
+		Log.d(TAG, "Airplay startActivity:" + appId);
+
+		Intent intent = new Intent();
+		Class<?> cls = null;
+		if (appId == JniInterface.VIDEO_PLAYER_ID) {
+			cls = MediaPlayerActivity.class;
+			intent.putExtra("playerType", MediaPlayerActivity.VIDEO);
+			intent.putExtra("mediaUrl", mediaUrl);
+			intent.putExtra("percent", percent);
+		} else if (appId == JniInterface.AUDIO_PLAYER_ID) {
+			cls = MediaPlayerActivity.class;
+			intent.putExtra("playerType", MediaPlayerActivity.MUSIC);
+		} else if (appId == JniInterface.PICTURE_SHOW_ID) {
+			cls = PictureShowActivity.class;
+			//intent.putExtra("picData", data);
+		}
+		intent.setClass(AirplayService.this, cls);
+		intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+		startActivity(intent);
+	}
+
+	@Override
+	public void onCreate() {
+		Log.d(TAG, "Airplay Create start");
+		 
+		int value = 0;
+		//SharedPreferences sp = initSP();
+		
+		//value = getValue(sp, ONOFF);
+	
+		value = Settings.System.getInt(this.getContentResolver(),"multi_screen", 1);
+		
+		Log.d(TAG, "Airplay onCreate value: " + value);
+		
+		switch(value){
+			case ON:
+				IsOn = true;
+				break;
+			case OFF:
+				IsOn = false;
+				break;
+			case EMPTY:
+				IsOn = true;
+				//setValue(sp, ONOFF, ON);
+				break;
+			case ERR:
+				IsOn = true;
+				break;
+			default:
+				IsOn = true;
+				break;		
+		}
+
+		JniInterface.getInstance().setService(this);
+		registerReceiver();
+		jmdns = AirplayMDNS.getInstance(this);
+		super.onCreate();
+		Log.d(TAG, "Airplay Create end");
+	}
+
+	
+	public SharedPreferences initSP(){
+		
+		 Log.d(TAG, "Airplay initSP");
+		 Context ctx = AirplayService.this;
+		 if(null != sp){
+		   sp = null;
+		 }
+		 sp = ctx.getSharedPreferences("airplay", MODE_PRIVATE);
+		 
+		 return sp;
+		 
+	}
+	
+	public int getValue(SharedPreferences sp, String key){
+		Log.d(TAG, "Airplay SP: " + sp + " getValue key: " + key);
+		int value = 0;
+		if(null != sp){
+			value = sp.getInt(key, 2);
+			return value;
+		}
+		return -1;
+	}
+
+	public boolean setValue(SharedPreferences sp, String key, int value){
+		
+		Log.d(TAG, "Airplay SP: " + sp + " setValue key: " + key + " value: " + value);
+		if(null != sp){
+			 Editor editor = sp.edit();
+			 editor.putInt(key, value);
+			 editor.commit();
+		}else{
+			return false;
+		}
+		
+		return true;
+	}
+	
+	public void registerReceiver() {
+		IntentFilter intentFilter = new IntentFilter();
+		intentFilter.addAction(ConnectivityManager.CONNECTIVITY_ACTION);
+		intentFilter.addAction(ACTION_CHANGE_NAME);
+		intentFilter.addAction(ACTION_MSS_CHANGE);
+		netStateBroadCastReceiver = new NetStateBroadCastReceiver();
+		registerReceiver(netStateBroadCastReceiver, intentFilter);
+
+	}
+
+	/**
+	 * 接收断网事件广播接收者
+	 * @author 韦念欣
+	 *
+	 */
+	public class NetStateBroadCastReceiver extends BroadcastReceiver {
+		public void onReceive(Context context, Intent intent) {
+
+			Log.d(TAG, "Airplay BroadcastReceiver intent:" + intent);
+			
+			if(intent.getAction().equals(ACTION_MSS_CHANGE)){
+				boolean status = intent.getBooleanExtra("MultiScreenIsOn", true);
+				Log.d(TAG, "ACTION_MSS_CHANGE: " + status);
+				Intent i = new Intent(context, AirplayService.class);
+				if(true == status){
+					i.setAction("MultiScreenUp");
+				}else{
+					i.setAction("MultiScreenDown");
+				}
+				context.startService(i);
+			}
+			if (intent.getAction().equals(ConnectivityManager.CONNECTIVITY_ACTION)) {
+
+				boolean noConnectivity =
+		                intent.getBooleanExtra(ConnectivityManager.EXTRA_NO_CONNECTIVITY, false);
+				
+				if (noConnectivity) {
+	                Log.d(TAG, "Airplay BroadcastReceiver: network DISCONNECTED");
+	        		name = null;
+	                Intent i = new Intent(context, AirplayService.class);
+	        		i.setAction("stopmCast");
+	        		context.startService(i);	
+	            } else {
+	            	Log.d(TAG, "Airplay BroadcastReceiver: network CONNECTED");
+	            	
+	            	ConnectivityManager manager = (ConnectivityManager) context
+	        				.getApplicationContext().getSystemService(
+	        						Context.CONNECTIVITY_SERVICE);
+	        		if (manager == null) {
+	        			return;
+	        		}
+	        		NetworkInfo networkinfo = manager.getActiveNetworkInfo();
+
+	        		if (networkinfo == null || !networkinfo.isAvailable()) {
+	        			return;
+	        		}
+
+	        		String type = networkinfo.getTypeName();
+
+	        		Log.d(TAG, "Airplay BroadcastReceiver: type: " + type + " name: " + name);
+
+	        		if (networkinfo.isConnected() == true) {
+
+	        			if(null == name){
+	        				name = type;
+	        				Log.d(TAG, "Airplay BroadcastReceiver: current: " + name);
+	    	        		Intent i = new Intent(context, AirplayService.class);
+	    	        		i.setAction("startmCast");
+	    	        		context.startService(i);	
+	        			}else{
+	        				if(type.contentEquals(name)){
+	        					Log.d(TAG, "Airplay BroadcastReceiver: current: " + name);
+		    	        		Intent i = new Intent(context, AirplayService.class);
+		    	        		i.setAction("startmCast");
+		    	        		context.startService(i);	
+	        				}else{
+	        					name = type;
+	        					Log.d(TAG, "Airplay BroadcastReceiver: current: " + name);
+		    	        		Intent i = new Intent(context, AirplayService.class);
+		    	        		i.setAction("reStartCast");
+		    	        		context.startService(i);	
+	        				}
+	        			}
+
+	        		}	
+	            }
+			}
+			if (intent.getAction().equals(ACTION_CHANGE_NAME)) {
+				Log.d(TAG, "Airplay BroadcastReceiver changeName");
+				//Toast.makeText(context, "changeName", 500).show();
+				Intent i = new Intent(context, AirplayService.class);
+				i.setAction("reStartCast");
+				context.startService(i);
+			}
+		
+			
+		}
+	}
+
+	@Override
+	public int onStartCommand(Intent intent, int flags, int startId) {
+		
+		Log.d(TAG, "Airplay onStartCommand intent: " + intent);
+		
+		String act = null;
+		// TODO Auto-generated method stub
+		if(null == intent){
+			act = "startService";
+		}else{
+			act = intent.getAction();
+		}
+		Log.d(TAG, "Airplay onStartCommand " + "SS: " + SS + " IsOn: "+ IsOn + " act: "+ act);
+		if("startService".equals(act)){
+			Log.d(TAG, "Airplay startService");
+			if(true == IsOn){
+				Log.d(TAG, "Airplay startService startmCast");
+				startmCast();
+			}else{
+				Log.d(TAG, "Airplay startService do nothings!");
+			}
+		}
+		else if("MultiScreenUp".equals(act)){
+			
+			Log.d(TAG, "Airplay MultiScreenUp IsOn: " + IsOn);
+			if(IsOn == false){
+				IsOn = true;
+				//SharedPreferences sp = initSP();
+				//setValue(sp, ONOFF, ON);
+				startmCast();
+			}else{
+				Log.d(TAG, "Airplay already up!");
+			}
+		}else if("MultiScreenDown".equals(act)){
+			Log.d(TAG, "Airplay MultiScreenDown IsOn: " + IsOn);
+			if(IsOn == true){
+				IsOn = false;
+				//SharedPreferences sp = initSP();
+				//setValue(sp, ONOFF, OFF);
+				stopmCast();
+			}else{
+				Log.d(TAG, "Airplay already down!");
+			}
+		}else if ("stopmCast".equals(act) && (IsOn == true) && (SS == true)) {
+			stopmCast();
+		} else if ("startmCast".equals(act) && (IsOn == true) && (SS == false)) {
+			startmCast();
+		} else if ("reStartCast".equals(act) && (IsOn == true)) {
+			stopmCast();
+			startmCast();
+		}else{
+			Log.d(TAG, "Airplay do nothing!");
+		}
+
+		return super.onStartCommand(intent, flags, startId);
+	}
+
+	/**
+	 * 断网后，停止正在播放的音视频和图片
+	 */
+	private void releaseResource(){
+		JniInterface jni = JniInterface.getInstance();
+		if (jni.playVideo){
+			setMediaPlayerState(STOP);
+			jni.operateMediaPlayer(VideoPlayerManager.STOP);
+		}
+		if (jni.playMusic){
+			setAudioPlayerState(STOP);
+			jni.closeAudioPlayer();
+		}
+		if (jni.showPicture){
+			jni.stopPictureShow();
+		}
+	}
+
+	private void startmCast() {
+		Log.d(TAG, "Airplay BroadcastReceiver startmCast");
+		SS = true;
+		if (jmdns != null) {
+			jmdns.getMyHandler().post(new Runnable() {
+				@Override
+				public void run() {
+					// TODO Auto-generated method stub
+					try {
+						Log.d(TAG, "run startmCast");
+						AirplayService.airplayStart();
+						Thread.sleep(1000);
+					} catch (InterruptedException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					}
+				}
+			});
+			jmdns.getMyHandler().sendEmptyMessage(AirplayMDNS.MDNS_START);
+		}
+	}
+
+	private void stopmCast() {
+		Log.d(TAG, "Airplay BroadcastReceiver stopmCast");
+		SS = false;
+		if (jmdns != null) {
+			jmdns.getMyHandler().sendEmptyMessage(AirplayMDNS.MDNS_STOP);
+			jmdns.getMyHandler().post(new Runnable() {
+				@Override
+				public void run() {
+					// TODO Auto-generated method stub
+					try {
+						Log.d(TAG, "run stopmCast");
+						releaseResource();
+						AirplayService.airplayStop();
+						Thread.sleep(3000);
+					} catch (InterruptedException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					}
+				}
+			});
+		}
+	}
+
+	@Override
+	public IBinder onBind(Intent intent) {
+		return null;
+	}
+
+	@Override
+	public void onDestroy() {
+		super.onDestroy();
+		Log.d(TAG, "Airplay onDestroy ");
+		
+		releaseResource();
+		if (netStateBroadCastReceiver != null) {
+			this.unregisterReceiver(netStateBroadCastReceiver);
+		}
+		if(jmdns != null){
+			jmdns.clearInstance();
+			jmdns = null;
+		}
+		airplayStop();
+	}
+	
+	
+	public native String stringFromJNI();
+	
+	public static native int renderStart();
+	
+	public static native int renderTestFunc();
+	
+	public static native int dlnaRenderNetInfoSet(String ip, String mac);
+	
+	
+	public static native int airplayStop();
+	public static native int airplayStart();
+	
+	public static native void setMediaPlayerState(int state);
+	
+	public static native void setAudioPlayerState(int state);
+
+}

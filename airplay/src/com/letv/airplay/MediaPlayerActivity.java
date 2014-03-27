@@ -1,0 +1,277 @@
+package com.letv.airplay;
+
+import com.letv.airplay.JniInterface.MediaPlayerArg;
+
+import android.app.Activity;
+import android.content.Intent;
+import android.media.AudioManager;
+import android.os.Bundle;
+import android.os.Handler;
+import android.util.Log;
+import android.view.KeyEvent;
+
+/**
+ * MediaPlayerActivity同时管理音频和视频的界面
+ * 
+ * @author 韦念欣
+ * 
+ */
+public class MediaPlayerActivity extends Activity {
+
+	public static final String TAG = MediaPlayerActivity.class.getSimpleName();
+
+	public final static boolean VIDEO = true;
+	public final static boolean MUSIC = false;
+
+	private PlayerView playerView;
+	private VideoPlayerManager videoPlayerManager;
+	private AudioPlayerManager audioPlayerManager;
+
+	private boolean playerType;
+	private String url;
+	private int percent;
+<<<<<<< .mine
+
+=======
+	private String videoId;
+	
+	
+>>>>>>> .r2659
+	public Handler mHandler;
+
+	@Override
+	protected void onCreate(Bundle savedInstanceState) {
+		super.onCreate(savedInstanceState);
+
+<<<<<<< .mine
+		Log.e(TAG, "onCreate: " + Thread.currentThread().getId());
+=======
+		Log.d(TAG, this + " onCreate: " +Thread.currentThread().getId());			
+>>>>>>> .r2659
+		setVolumeControlStream(AudioManager.STREAM_MUSIC);
+		mHandler = new Handler();
+		JniInterface.getInstance().setMediaActivity(this,this);
+
+		playerView = new PlayerView(this);
+		setContentView(playerView);
+
+		Intent intent = getIntent();
+		playerType = intent.getBooleanExtra("playerType", VIDEO);
+		url = intent.getStringExtra("mediaUrl");
+		percent = intent.getIntExtra("percent", 0);
+<<<<<<< .mine
+
+=======
+		videoId = intent.getStringExtra("videoId");
+		
+>>>>>>> .r2659
+		Log.e(TAG, "playerType: " + playerType);
+		if (playerType == VIDEO) {
+<<<<<<< .mine
+			videoPlayerManager = new VideoPlayerManager(this, playerView, url,
+					percent);
+=======
+			videoPlayerManager = new VideoPlayerManager(this, playerView, url, percent, videoId);
+>>>>>>> .r2659
+			videoPlayerManager.onCreate(savedInstanceState);
+		} else if (playerType == MUSIC) {
+			audioPlayerManager = new AudioPlayerManager(this, playerView);
+			audioPlayerManager.onCreate(savedInstanceState);
+		}
+
+		JniInterface.getInstance().SemaphoreMediaRelease();
+	}
+
+	@Override
+	protected void onStart() {
+		super.onStart();
+
+		Log.e(TAG,  this + " onStart");
+
+		if (playerType == VIDEO) {
+			videoPlayerManager.onStart();
+		} else if (playerType == MUSIC) {
+			audioPlayerManager.onStart();
+		}
+		//videoPlayerManager.onStart();
+	}
+
+	@Override
+	protected void onResume() {
+		super.onResume();
+
+		Log.e(TAG,  this + " onResume");
+
+		mHandler.postDelayed(new Runnable() {
+
+			@Override
+			public void run() {
+				// TODO Auto-generated method stub
+				if (playerType == VIDEO) {
+					videoPlayerManager.onResume();
+				} else if (playerType == MUSIC) {
+					audioPlayerManager.onResume();
+				}
+			}
+		}, 3000);
+	}
+
+	@Override
+	protected void onPause() {
+		super.onPause();
+
+		Log.e(TAG, this + " onPause");
+		JniInterface.getInstance().setMediaActivity(this,null);
+		JniInterface.getInstance().SemaphoreMediaRelease();
+		if (playerType == VIDEO) {
+			videoPlayerManager.onPause();
+		} else if (playerType == MUSIC) {
+			audioPlayerManager.onPause();
+		}
+	}
+
+	@Override
+	protected void onStop() {
+
+		Log.e(TAG,  this + " onStop: " + playerType);
+		super.onStop();
+		JniInterface.getInstance().setMediaActivity(this,null);
+		if (playerType == VIDEO) {
+			videoPlayerManager.onStop();
+		} else if (playerType == MUSIC) {
+			audioPlayerManager.onStop();
+		}
+	}
+
+	@Override
+	protected void onDestroy() {
+		super.onDestroy();
+
+		Log.e(TAG,  this + " onDestroy");
+
+		JniInterface.getInstance().setMediaActivity(this,null);
+		// if (playerType == VIDEO) {
+		// videoPlayerManager.onDestroy();
+		// }else if (playerType == MUSIC) {
+		// audioPlayerManager.onDestroy();
+		// }
+		System.out.println(playerType + "****type*****");
+		if (mHandler != null) {
+			if (ra != null)
+				mHandler.removeCallbacks(ra);
+
+			mHandler = null;
+		}
+	}
+
+	@Override
+	public boolean onKeyDown(int keyCode, KeyEvent event) {
+		if (playerType == VIDEO) {
+			return videoPlayerManager.onKeyDown(keyCode, event);
+		} else if (playerType == MUSIC) {
+			return audioPlayerManager.onKeyDown(keyCode, event);
+		}
+		return super.onKeyDown(keyCode, event);
+	}
+
+	public boolean getPlayerType() {
+		return playerType;
+	}
+
+	@Override
+	public boolean onKeyUp(int keyCode, KeyEvent event) {
+		if (playerType == VIDEO) {
+			return videoPlayerManager.onKeyUp(keyCode, event);
+		}
+		return super.onKeyUp(keyCode, event);
+	}
+
+	public class CM implements Runnable {
+		String mediaUrl;
+		int percent;
+<<<<<<< .mine
+
+		CM(String url, int per) {
+			mediaUrl = url;
+			percent = per;
+=======
+		String videoId;
+		
+		CM(MediaPlayerArg arg){
+			mediaUrl = arg.getMediaUrl();
+			percent = arg.getPercent();
+			videoId = arg.getVideoId();
+>>>>>>> .r2659
+		};
+
+		@Override
+		public void run() {
+<<<<<<< .mine
+			Log.e(TAG, "Runnable changeVideo: " + " mediaUrl: " + mediaUrl
+					+ " percent: " + percent);
+			changeVideo(mediaUrl, percent);
+=======
+			Log.e(TAG, "Runnable changeVideo: " + " mediaUrl: " + mediaUrl + " percent: " + percent + "videoId: " + videoId);
+			changeVideo(mediaUrl, percent, videoId);
+>>>>>>> .r2659
+		}
+
+	}
+
+	public Runnable ra = new Runnable() {
+		public void run() {
+			changeMusic();
+		}
+	};
+
+	/**
+	 * 从音频界面转换到视频界面
+	 */
+	public void changeVideo(String url, int per, String id) {
+		Log.e(TAG, "changeVideo: " + playerType);
+		playerView.removePureBG();
+		if (playerType != VIDEO) {
+			// JniInterface.getInstance().setAudioPlayer(null);
+			if (audioPlayerManager != null) {
+				// audioPlayerManager.onPause();
+				audioPlayerManager.stopPlay();
+			}
+			audioPlayerManager = null;
+			playerType = VIDEO;
+
+<<<<<<< .mine
+			videoPlayerManager = new VideoPlayerManager(this, playerView, url,
+					per);
+=======
+			videoPlayerManager = new VideoPlayerManager(this, playerView, url, per, id);
+>>>>>>> .r2659
+			videoPlayerManager.onCreate(null);
+			videoPlayerManager.onStart();
+			videoPlayerManager.onResume();
+		}
+
+		JniInterface.getInstance().SemaphoreMediaRelease();
+	}
+
+	/**
+	 * 从视频界面转换到音频界面
+	 */
+	public void changeMusic() {
+		Log.e(TAG, "changeMusic: " + playerType);
+		if (playerType != MUSIC) {
+			// JniInterface.getInstance().setMediaPlayer(null);
+			if (videoPlayerManager != null) {
+				videoPlayerManager.stopPlay();
+			}
+
+			videoPlayerManager = null;
+			playerType = MUSIC;
+
+			audioPlayerManager = new AudioPlayerManager(this, playerView);
+			audioPlayerManager.onCreate(null);
+			audioPlayerManager.onStart();
+			audioPlayerManager.onResume();
+		}
+		JniInterface.getInstance().SemaphoreMediaRelease();
+	}
+}

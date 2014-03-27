@@ -1,0 +1,998 @@
+package com.letv.airplay;
+
+import java.util.concurrent.Semaphore;
+
+import android.app.Activity;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.HandlerThread;
+import android.os.Looper;
+import android.os.Message;
+import android.text.TextUtils;
+import android.util.Log;
+
+/**
+ * AirPlay --> C调用Java的JNI接口类
+ * @author 韦念欣
+ * @modify Jamin
+ *
+ */
+public class JniInterface {
+	
+	public static final String TAG = JniInterface.class.getSimpleName();
+
+	public static final int VIDEO_PLAYER_ID = 0;
+	public static final int AUDIO_PLAYER_ID = 1;
+	public static final int PICTURE_SHOW_ID = 2;
+	
+	
+	/*
+	 * 网络指令+遥控器指令+内部指令
+	 */
+	private static final int TYPE_SET				= 10000;
+	private static final int TYPE_SET_MEDIAPLAYER	= TYPE_SET + 1;	
+	private static final int TYPE_SET_AUDIOPLAYER	= TYPE_SET + 2;		
+	private static final int TYPE_SET_PIC			= TYPE_SET + 3;	
+	private static final int TYPE_SET_SERVICE		= TYPE_SET + 4;
+	private static final int TYPE_SET_MEDIA_ACTIVITY= TYPE_SET + 5;
+	
+	private static final int TYPE_PIC				= 20000;
+	private static final int TYPE_PIC_SHOW			= TYPE_PIC + 1;
+	private static final int TYPE_PIC_HIDE			= TYPE_PIC + 2;
+	private static final int TYPE_PIC_ONCREATED		= TYPE_PIC + 3;
+	
+	private static final int TYPE_VIDEO				= 30000;
+	private static final int TYPE_VIDEO_START 		= TYPE_VIDEO + 1;
+	private static final int TYPE_VIDEO_PLAY		= TYPE_VIDEO + 2;
+	private static final int TYPE_VIDEO_PAUSE		= TYPE_VIDEO + 3;
+	private static final int TYPE_VIDEO_STOP		= TYPE_VIDEO + 4;
+	private static final int TYPE_VIDEO_SEEK_MD		= TYPE_VIDEO + 5;
+	private static final int TYPE_VIDEO_SEEK_RC		= TYPE_VIDEO + 6;
+	private static final int TYPE_VIDEO_BACK		= TYPE_VIDEO + 7;
+	private static final int TYPE_VIDEO_HOME		= TYPE_VIDEO + 8;
+	private static final int TYPE_VIDEO_VOL_L		= TYPE_VIDEO + 9;
+	private static final int TYPE_VIDEO_VOL_R 		= TYPE_VIDEO + 10;
+	private static final int TYPE_VIDEO_VOL_MUTE 	= TYPE_VIDEO + 11;
+	private static final int TYPE_PLAY_URL			= TYPE_VIDEO + 12;	
+	private static final int TYPE_VIDEO_PLAYORPAUSE	= TYPE_VIDEO + 13;
+	private static final int TYPE_VIDEO_ERROR		= TYPE_VIDEO + 14;
+	private static final int TYPE_VIDEO_SEEK_TS		= TYPE_VIDEO + 15;	
+	private static final int TYPE_VIDEO_FINISH		= TYPE_VIDEO + 16;
+	private static final int TYPE_VIDEO_PRO			= TYPE_VIDEO + 17;
+	private static final int TYPE_VIDEO_PRO_VIEW	= TYPE_VIDEO + 18;
+	private static final int TYPE_VIDEO_ONCREATED	= TYPE_VIDEO + 19;
+	private static final int TYPE_VIDEO_STATUS		= TYPE_VIDEO + 20;
+	
+	private static final int TYPE_AUDIO				= 40000;
+	private static final int TYPE_AUDIO_START 		= TYPE_AUDIO + 1;
+	private static final int TYPE_AUDIO_PUSH_DATA 	= TYPE_AUDIO + 2;
+	private static final int TYPE_AUDIO_LOGO 		= TYPE_AUDIO + 3;
+	private static final int TYPE_AUDIO_ASAR 		= TYPE_AUDIO + 4;
+	private static final int TYPE_AUDIO_MINM 		= TYPE_AUDIO + 5;
+	private static final int TYPE_AUDIO_VOL			= TYPE_AUDIO + 6;
+	private static final int TYPE_AUDIO_CLOSE 		= TYPE_AUDIO + 7;
+	private static final int TYPE_AUDIO_BACK 		= TYPE_AUDIO + 8;
+	private static final int TYPE_AUDIO_HOME		= TYPE_AUDIO + 9;
+	private static final int TYPE_AUDIO_VOL_L		= TYPE_AUDIO + 10;
+	private static final int TYPE_AUDIO_VOL_R		= TYPE_AUDIO + 11;
+	private static final int TYPE_AUDIO_VOL_MUTE	= TYPE_AUDIO + 12;
+	private static final int TYPE_AUDIO_ONCREATED   = TYPE_AUDIO + 13;
+	private static final int TYPE_AUDIO_STATUS		= TYPE_AUDIO + 14;
+	
+	public int seekPos = 0;
+
+	private AirplayService airplayService = null;
+	private MediaPlayerActivity mediaPlayerActivity = null;
+	private VideoPlayerManager videoPlayerManager = null;
+	private AudioPlayerManager audioPlayerManager = null;
+	private PictureShowActivity pictureActivity = null;
+	
+	private HandlerThread handlerThread;
+	private MyHandler myHandler;
+	
+	public boolean playVideo = false;
+	public boolean playMusic = false;
+	public boolean showPicture = false;
+	
+	public byte[] Data = null;
+	/*
+	 * 确保startActivity串行
+	 */
+	Semaphore OnCreatedMedia;
+	
+	Semaphore OnCreatedPicture;
+	
+	private int VideoDuration;
+	private int VideoPosition;
+	
+	
+	public class StatusActivity {
+		private MediaPlayerActivity beforeActivity;
+		private MediaPlayerActivity afterActivity;
+		
+		StatusActivity(MediaPlayerActivity before, MediaPlayerActivity after){
+			beforeActivity = before;
+			afterActivity = after;
+		}
+	}
+	
+	/**
+	 * mediaplayer arg
+	 * @author Jamin
+	 *
+	 */
+	public class MediaPlayerArg{
+		private String mediaUrl;
+		private int percent;
+		private String videoId;
+		
+		MediaPlayerArg(String url, int pos, String id){
+			mediaUrl = url;
+			percent = pos;
+			videoId = id;
+		}
+		
+		public String getMediaUrl(){
+			return mediaUrl;
+		}
+		public int getPercent(){
+			return percent;
+		}
+		
+		public String getVideoId(){
+			return videoId;
+		}
+	}
+	
+	public class MediaPlayerState{
+		private String videoId;
+		private int state;
+		
+		MediaPlayerState(String id, int status){
+			videoId = id;
+			state = status;
+		}
+		
+		public String getVideoId(){
+			return videoId;
+		}
+		
+		public int getState(){
+			return state;
+		}
+		
+	}
+	
+	/**
+	 * JNI初始化方法
+	 */
+	public native void initJniInterface();
+
+	
+	/**
+	 * 单例
+	 */
+	private JniInterface() {
+		
+		handlerThread = new HandlerThread("jni_handler_thread");  
+		handlerThread.start();
+		myHandler = new MyHandler(handlerThread.getLooper());  
+		
+		OnCreatedMedia = new Semaphore(1);
+		
+		OnCreatedPicture = new Semaphore(1);
+		
+	}
+	private static JniInterface singleton = new JniInterface();
+	public static JniInterface getInstance() {
+		return singleton;
+	}
+
+	class MyHandler extends Handler{  
+        public MyHandler(){  
+           
+        }  
+        public MyHandler(Looper looper){  
+           super(looper);  
+        }  
+        /** 
+         * 更改界面的方法 （其实handlemessage就是你想这个线程做的事情）
+         */  
+        @Override  
+        public void handleMessage(Message msg) {
+			//Log.d(TAG, "handler_thread currentThread: " +Thread.currentThread().getId());
+			super.handleMessage(msg);
+			switch (msg.what){
+			case TYPE_VIDEO_START:		
+				SemaphoreMediaAcquire();
+				
+				setPlayVideo(true);
+				setPlayMusic(false);
+				setShowPicture(false);	
+				
+				setPlayDuration(0);
+				setPlayPosition(0);
+				if (!TextUtils.isEmpty(((MediaPlayerArg)msg.obj).getMediaUrl())){
+					if (mediaPlayerActivity == null) {
+						airplayService.startActivity(VIDEO_PLAYER_ID, (MediaPlayerArg)msg.obj);
+					}else {
+						Log.d(TAG, "TYPE_VIDEO_START "+ " mHandler: " + mediaPlayerActivity.mHandler);
+						if (mediaPlayerActivity.mHandler != null) {
+							audioPlayerManager = null;
+							MediaPlayerActivity.CM cm = mediaPlayerActivity.new CM((MediaPlayerArg)msg.obj);
+							mediaPlayerActivity.mHandler.post(cm);
+						}
+					}
+				}
+				break;
+			case TYPE_VIDEO_PLAY:
+				if(videoPlayerManager != null){
+					videoPlayerManager.play();
+				}
+				break;
+			case TYPE_VIDEO_PAUSE:
+				if(videoPlayerManager != null){
+					videoPlayerManager.pausePlay();
+				}
+				break;
+			case TYPE_VIDEO_STOP:
+				if(videoPlayerManager != null){
+					setPlayVideo(false);
+					videoPlayerManager.stopPlay();
+					videoPlayerManager.finish();
+					videoPlayerManager = null;
+				}
+				break;
+			case TYPE_VIDEO_SEEK_MD:
+				Log.d(TAG, "TYPE_VIDEO_SEEK_MD");
+				if(videoPlayerManager != null){
+					seekPos = (Integer)msg.obj * 1000;
+					if(videoPlayerManager != null){
+						videoPlayerManager.seekMediaPlayerUpdateUI(seekPos);
+						videoPlayerManager.seekMediaPlayerMD(seekPos);
+					}
+				}
+				break;
+			case TYPE_PLAY_URL:
+				if(videoPlayerManager != null){
+					videoPlayerManager.play();
+				}
+				break;
+			case TYPE_VIDEO_SEEK_RC:
+				Log.d(TAG, "TYPE_VIDEO_SEEK_RC");
+				if(videoPlayerManager != null){
+					videoPlayerManager.seekMediaPlayerRC((Integer)msg.obj);
+				}
+				break;
+			case TYPE_VIDEO_SEEK_TS:
+				Log.d(TAG, "TYPE_VIDEO_SEEK_TS");
+				if(videoPlayerManager != null){
+					videoPlayerManager.seekMediaPlayerUpdateUI(seekPos);
+					videoPlayerManager.seekMediaPlayerTS((Integer)msg.obj);
+				}
+				break;
+			case TYPE_VIDEO_VOL_R:
+				Log.d(TAG, "TYPE_VIDEO_VOL_R");
+				if(videoPlayerManager != null){
+					videoPlayerManager.raiseVolume();
+				}				
+				break;
+			case TYPE_VIDEO_VOL_L:
+				Log.d(TAG, "TYPE_VIDEO_VOL_L");
+				if(videoPlayerManager != null){
+					videoPlayerManager.reduceVolume();
+				}
+				break;
+			case TYPE_VIDEO_VOL_MUTE:
+				Log.d(TAG, "TYPE_VIDEO_VOL_MUTE");
+				if(videoPlayerManager != null){
+					videoPlayerManager.muteVolume();
+				}
+				break;	
+			case TYPE_VIDEO_BACK:
+				if (videoPlayerManager != null) {
+					setPlayVideo(false);
+					videoPlayerManager.finish();
+					videoPlayerManager = null;
+				}
+				break;
+			case TYPE_VIDEO_HOME:
+				if (videoPlayerManager != null) {
+					setPlayVideo(false);
+					videoPlayerManager.stopPlay();	
+					videoPlayerManager.finish();
+					videoPlayerManager = null;
+				}
+				break;
+			case TYPE_VIDEO_PLAYORPAUSE:
+				if(videoPlayerManager != null){
+					videoPlayerManager.VideoPlayOrPause();
+				}				
+				break;
+			case TYPE_VIDEO_FINISH:
+				if(videoPlayerManager != null){
+					setPlayVideo(false);
+					videoPlayerManager.finish();
+					videoPlayerManager = null;
+				}
+				break;
+			case TYPE_VIDEO_ERROR:
+				if (videoPlayerManager != null) {
+					setPlayVideo(false);
+					videoPlayerManager.finish();
+					videoPlayerManager = null;
+				}
+				break;
+			case TYPE_VIDEO_PRO:
+				if (videoPlayerManager != null) {
+					videoPlayerManager.progress();
+				}
+				break;
+			case TYPE_VIDEO_PRO_VIEW:
+				if (videoPlayerManager != null) {
+					videoPlayerManager.progressView((Integer)msg.obj);
+				}				
+				break;
+			case TYPE_SET_MEDIAPLAYER:
+				Log.d(TAG, "set VideoPlayerManager playVideo: " + playVideo);
+				if(playVideo)
+					videoPlayerManager = (VideoPlayerManager)msg.obj;
+				break;
+			case TYPE_SET_AUDIOPLAYER:
+				Log.d(TAG, "set AudioPlayerManager playMusic: " + playMusic);
+				if(playMusic)
+					audioPlayerManager = (AudioPlayerManager)msg.obj;
+				break;
+			case TYPE_SET_PIC:
+				Log.d(TAG, "set PictureShowActivity showPicture: " + showPicture);
+				if(showPicture)
+					pictureActivity = (PictureShowActivity)msg.obj;
+				break;
+			case TYPE_PIC_SHOW:
+				SemaphorePictureAcquire();
+				
+				setPlayMusic(false);
+				setPlayVideo(false);
+				setShowPicture(true);
+				String id = "all";
+				AirplayService.setMediaPlayerState(id, id.length(), AirplayService.STOP);
+				AirplayService.setAudioPlayerState(id, id.length(), AirplayService.STOP);
+				
+				if (mediaPlayerActivity != null){
+					mediaPlayerActivity.finish();
+					mediaPlayerActivity = null;
+				}				
+				if (pictureActivity == null){
+					Data = null;
+					Data = (byte[])msg.obj;
+					airplayService.startActivity(PICTURE_SHOW_ID, null);
+				}else{
+					pictureActivity.showPic((byte[])msg.obj);
+				}
+				break;
+			case TYPE_PIC_HIDE:
+				setShowPicture(false);
+				if (pictureActivity != null){
+					pictureActivity.finish();
+					pictureActivity = null;
+				}
+				System.gc();
+				break;
+			case TYPE_SET_SERVICE:
+				airplayService = (AirplayService)msg.obj;
+				mediaPlayerActivity = null;
+				videoPlayerManager = null;
+				audioPlayerManager = null;
+				pictureActivity = null;
+				setPlayVideo(false);
+				setPlayMusic(false);
+				setShowPicture(false);
+				initJniInterface();
+				break;
+			case TYPE_SET_MEDIA_ACTIVITY:
+				if(((StatusActivity)msg.obj).afterActivity == null){
+					if (((StatusActivity)msg.obj).beforeActivity == mediaPlayerActivity){
+						mediaPlayerActivity = ((StatusActivity)msg.obj).afterActivity;
+						Log.d(TAG, "mediaPlayerActivity: " + mediaPlayerActivity);
+					}
+				}else{
+					mediaPlayerActivity = ((StatusActivity)msg.obj).afterActivity;
+					Log.d(TAG, "mediaPlayerActivity: " + mediaPlayerActivity);
+				}
+				break;
+			case TYPE_VIDEO_STATUS:
+				if(((MediaPlayerState)msg.obj).getVideoId() == null){
+					AirplayService.setMediaPlayerState(null, 0, ((MediaPlayerState)msg.obj).getState());
+				}else{
+					AirplayService.setMediaPlayerState(((MediaPlayerState)msg.obj).getVideoId(), ((MediaPlayerState)msg.obj).getVideoId().length(), ((MediaPlayerState)msg.obj).getState());
+				}
+					break;
+			case TYPE_AUDIO_STATUS:
+				if(((MediaPlayerState)msg.obj).getVideoId() == null){
+					AirplayService.setAudioPlayerState(null, 0, ((MediaPlayerState)msg.obj).getState());
+				}else{
+					AirplayService.setAudioPlayerState(((MediaPlayerState)msg.obj).getVideoId(), ((MediaPlayerState)msg.obj).getVideoId().length(), ((MediaPlayerState)msg.obj).getState());
+				}
+				break;
+			case TYPE_AUDIO_START:
+				SemaphoreMediaAcquire();
+				setPlayMusic(true);
+				setPlayVideo(false);
+				setShowPicture(false);
+				// 释放音频资源
+				if (audioPlayerManager != null) {
+					audioPlayerManager.stopPlay();
+					audioPlayerManager = null;
+				}
+				
+				if (mediaPlayerActivity == null) {
+					airplayService.startActivity(AUDIO_PLAYER_ID, null);
+				}else {
+					if (mediaPlayerActivity.mHandler != null
+							&& mediaPlayerActivity.ra != null) {
+						videoPlayerManager = null;
+						mediaPlayerActivity.mHandler.post(mediaPlayerActivity.ra);
+					}
+				}
+				break;
+			case TYPE_AUDIO_PUSH_DATA:
+				if (audioPlayerManager != null) {
+					audioPlayerManager.addDataSource((byte[])msg.obj, msg.arg1, msg.arg2);
+				}
+				break;
+			case TYPE_AUDIO_LOGO:
+				if(audioPlayerManager != null)
+					audioPlayerManager.setMusicImage((byte[])msg.obj, 0, msg.arg1);
+				else if(true == getPlayMusic()){
+					Log.d(TAG, "Again AudioPlayerLogo");
+					myHandler.sendMessageDelayed(myHandler.obtainMessage(TYPE_AUDIO_LOGO, msg.arg1, 0, (byte[])msg.obj), 1000);						
+				}else{
+					;
+				}
+				break;
+			case TYPE_AUDIO_ASAR:
+				if(audioPlayerManager != null)
+					audioPlayerManager.setMusicAuthor((String)msg.obj);
+				else if(true == getPlayMusic()){
+					Log.d(TAG, "Again AudioPlayerAsar");
+					myHandler.sendMessageDelayed(myHandler.obtainMessage(TYPE_AUDIO_ASAR, msg.arg1, 0, (String)msg.obj), 1000);					
+				}else{
+					;
+				}
+				break;
+			case TYPE_AUDIO_MINM:
+				if(audioPlayerManager != null)
+					audioPlayerManager.setMusicTitle((String)msg.obj);
+				else if(true == getPlayMusic()){
+					Log.d(TAG, "Again AudioPlayerMinm");
+					myHandler.sendMessageDelayed(myHandler.obtainMessage(TYPE_AUDIO_MINM, msg.arg1, 0, (String)msg.obj), 1000);					
+				}else{
+					;
+				}
+				break;
+			case TYPE_AUDIO_VOL:
+				if (audioPlayerManager != null) {
+					audioPlayerManager.setStereoVolume(((Vol) msg.obj).getletfVol(), ((Vol) msg.obj).getrightVol());
+				}
+				break;
+			case TYPE_AUDIO_VOL_L:
+				if (audioPlayerManager != null) {
+					audioPlayerManager.reduceVolume();
+				}
+				break;
+			case TYPE_AUDIO_VOL_R:
+				if (audioPlayerManager != null) {
+					audioPlayerManager.raiseVolume();
+				}
+				break;
+			case TYPE_AUDIO_VOL_MUTE:
+				if (audioPlayerManager != null) {
+					audioPlayerManager.muteVolume();
+				}
+				break;
+			case TYPE_AUDIO_BACK:
+				//AirplayService.setAudioPlayerState(AirplayService.STOP);
+				if (audioPlayerManager != null) {
+					setPlayMusic(false);
+					audioPlayerManager.finish();
+					audioPlayerManager = null;
+				}
+				break;
+			case TYPE_AUDIO_HOME:
+				//AirplayService.setAudioPlayerState(AirplayService.STOP);
+				if (audioPlayerManager != null) {
+					setPlayMusic(false);
+					audioPlayerManager.finish();
+					audioPlayerManager = null;
+				}
+				break;
+			case TYPE_AUDIO_CLOSE:
+				if (audioPlayerManager != null) {
+					setPlayMusic(false);
+					audioPlayerManager.finish();
+					audioPlayerManager = null;
+				}	
+				//new Handler(mediaPlayerActivity.getMainLooper()).post(new Runnable(){
+				//	@Override
+				//	public void run() {
+				//		if (audioPlayerManager != null && playVideo == false) {
+				//			Log.d(TAG, "closeAudioPlayer finish");
+				//			audioPlayerManager.finish();
+				//			audioPlayerManager = null;
+				//		}
+				//	}
+				//});
+				break;
+			default:
+				break;
+			}
+		}  
+   }  
+
+	
+	
+	
+	////////////////////////设置各个控制对象/////////////////////////
+	public void setService(AirplayService airplayService) {
+		myHandler.sendMessage(myHandler.obtainMessage(TYPE_SET_SERVICE, airplayService));
+	}
+
+	
+	public void setMediaActivity(MediaPlayerActivity before, MediaPlayerActivity after) {
+		Log.d(TAG, "before: " + before + " after: " + after);
+		myHandler.sendMessage(myHandler.obtainMessage(TYPE_SET_MEDIA_ACTIVITY, new StatusActivity(before, after)));
+	}
+
+	public void setMediaPlayer(VideoPlayerManager mediaPlayer) {
+		Log.d(TAG, "setMediaPlayer : " + mediaPlayer);
+		myHandler.sendMessage(myHandler.obtainMessage(TYPE_SET_MEDIAPLAYER, mediaPlayer));
+	}
+	
+	
+	public void setAudioPlayer(AudioPlayerManager audioPlayer) {
+		Log.d(TAG, "setAudioPlayer : " + audioPlayer);
+		myHandler.sendMessage(myHandler.obtainMessage(TYPE_SET_AUDIOPLAYER, audioPlayer));
+	}
+
+	
+	
+	public void setPictureShow(PictureShowActivity pictureShow) {
+		myHandler.sendMessage(myHandler.obtainMessage(TYPE_SET_PIC, pictureShow));
+	}
+
+	
+	public void setPlayVideo(boolean Flag) {
+		playVideo = Flag;
+		Log.d(TAG, "setPlayVideo: " + playVideo);
+	}
+
+	public boolean getPlayVideo() {
+		Log.d(TAG, "getPlayVideo: " + playVideo);
+		return playVideo;
+	}
+
+	public void setPlayMusic(boolean Flag) {
+		playMusic = Flag;
+		Log.d(TAG, "setPlayMusic: " + playMusic);
+	}
+
+	public boolean getPlayMusic(){
+		Log.d(TAG, "getPlayMusic: " + playMusic);	
+		return playMusic;
+	}
+	
+	public void setShowPicture(boolean Flag) {
+		showPicture = Flag;
+		Log.d(TAG, "setShowPicture: " + showPicture);
+	}
+
+	public boolean getShowPicture() {
+		Log.d(TAG, "getShowPicture: " + showPicture);
+		return showPicture;
+	}
+	
+	public void setPlayDuration(int d)
+	{
+		if(d >= 0)
+			VideoDuration = d;
+		Log.d(TAG, "setPlayDuration: " + VideoDuration);
+	}
+	
+	public void setPlayPosition(int p){
+		if(p >= 0)
+			VideoPosition = p;
+		Log.d(TAG, "setPlayPositon: " + VideoPosition);
+	}
+	
+	public void SemaphoreMediaAcquire(){
+		Log.d(TAG, "SemaphoreMediaAcquire start");
+		try {
+			OnCreatedMedia.acquire();
+		} catch (InterruptedException e) {
+			Log.d(TAG, "SemaphoreMediaAcquire faild!");
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		Log.d(TAG, "SemaphoreMediaAcquire end");
+	}
+
+	public void SemaphoreMediaRelease(){
+		int count;
+		count = OnCreatedMedia.availablePermits();
+		Log.d(TAG, "SemaphoreMediaRelease start count: " + count);
+		if(count == 0){
+			OnCreatedMedia.release();
+			Log.d(TAG, "SemaphoreMediaReleasing");
+		}
+		else{
+		}
+		Log.d(TAG, "SemaphoreMediaRelease end");
+	}
+	
+	
+	public void SemaphorePictureAcquire(){
+		Log.d(TAG, "SemaphorePictureAcquire start");
+		try {
+			OnCreatedPicture.acquire();
+		} catch (InterruptedException e) {
+			Log.d(TAG, "SemaphorePictureAcquire faild!");
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		Log.d(TAG, "SemaphorePictureAcquire end");
+	}
+
+	public void SemaphorePictureRelease(){
+		int count;
+		count = OnCreatedPicture.availablePermits();
+		Log.d(TAG, "SemaphorePictureRelease start count: " + count);
+		if(count == 0){
+			OnCreatedPicture.release();
+			Log.d(TAG, "SemaphorePictureReleasing");
+		}
+		else{
+		}
+		Log.d(TAG, "SemaphorePictureRelease end");
+	}
+	
+	
+	
+	public void startActivity(int appId) {
+		Log.d(TAG, "startActivity:" + appId);
+		airplayService.startActivity(appId, null);
+	}
+
+	
+	/**
+	 * 遥控器的控制
+	 */
+	
+	/*
+	 * Audio
+	 */
+	public void AudioraiseVolume(){
+		Log.d(TAG, "raiseVolume");
+		myHandler.sendEmptyMessage(TYPE_AUDIO_VOL_R);
+	}
+	
+	public void AudioreduceVolume(){
+		Log.d(TAG, "reduceVolume");
+		myHandler.sendEmptyMessage(TYPE_AUDIO_VOL_L);
+	}
+	
+	public void AudiomuteVolume(){
+		Log.d(TAG, "muteVolume");
+		myHandler.sendEmptyMessage(TYPE_AUDIO_VOL_MUTE);
+	}
+	
+	public void AudioBack(){
+		Log.d(TAG, "AudioBack");
+		myHandler.sendEmptyMessage(TYPE_AUDIO_BACK);
+	}
+	public void AudioHome(){
+		Log.d(TAG, "AudioHome");
+		myHandler.sendEmptyMessage(TYPE_AUDIO_HOME);
+	}
+	
+	/*
+	 * Video
+	 */
+	public void VideoraiseVolume(){
+		Log.d(TAG, "raiseVolume");
+		myHandler.sendEmptyMessage(TYPE_VIDEO_VOL_R);
+	}
+	
+	public void VideoreduceVolume(){
+		Log.d(TAG, "reduceVolume");
+		myHandler.sendEmptyMessage(TYPE_VIDEO_VOL_L);
+	}
+	
+	public void VideomuteVolume(){
+		Log.d(TAG, "muteVolume");
+		myHandler.sendEmptyMessage(TYPE_VIDEO_VOL_MUTE);
+	}
+	
+	public void VideoSeekRC(int action){
+		Log.d(TAG, "VideoSeekRC " + "action: " + action);
+		myHandler.removeMessages(TYPE_VIDEO_PLAYORPAUSE);
+		myHandler.removeMessages(TYPE_VIDEO_SEEK_RC);
+		myHandler.removeMessages(TYPE_VIDEO_SEEK_MD);
+		myHandler.removeMessages(TYPE_VIDEO_SEEK_TS);
+		myHandler.removeMessages(TYPE_VIDEO_PRO_VIEW);
+		myHandler.sendMessage(myHandler.obtainMessage(TYPE_VIDEO_SEEK_RC, action));
+	}
+
+	public void VideoSeekTS(int pos){
+		Log.d(TAG, "VideoSeekTS " + "action: " + pos);
+		myHandler.removeMessages(TYPE_VIDEO_PLAYORPAUSE);
+		myHandler.removeMessages(TYPE_VIDEO_SEEK_RC);
+		myHandler.removeMessages(TYPE_VIDEO_SEEK_MD);	
+		myHandler.removeMessages(TYPE_VIDEO_SEEK_TS);
+		myHandler.removeMessages(TYPE_VIDEO_PRO_VIEW);
+		myHandler.sendMessage(myHandler.obtainMessage(TYPE_VIDEO_SEEK_TS, pos));
+	}
+	
+	public void VideoBack(){
+		Log.d(TAG, "AudioBack");
+		myHandler.sendEmptyMessage(TYPE_VIDEO_BACK);
+	}
+	
+	public void VideoPlayOrPause(){
+		Log.d(TAG, "VideoPlayOrPause");
+		myHandler.sendEmptyMessage(TYPE_VIDEO_PLAYORPAUSE);
+	}
+	
+	public void VideoHome(){
+		Log.d(TAG, "VideoHome");
+		myHandler.sendEmptyMessage(TYPE_VIDEO_HOME);
+	}
+
+	public void VideoFinish(){
+		Log.d(TAG, "VideoFinish");
+		myHandler.sendEmptyMessage(TYPE_VIDEO_FINISH);
+	}
+	public void VideoOnError(){
+		Log.d(TAG, "VideoOnError");
+		myHandler.sendEmptyMessage(TYPE_VIDEO_ERROR);
+	}
+	
+	public void VideoPro(){
+		//Log.d(TAG, "VideoPro");
+		myHandler.sendEmptyMessage(TYPE_VIDEO_PRO);		
+	}
+	
+	public void VideoProView(int pos){
+		//Log.d(TAG, "VideoProView");
+		myHandler.sendMessage(myHandler.obtainMessage(TYPE_VIDEO_PRO_VIEW, pos));		
+	}
+	
+	
+	public void setVideoState(String id, int status){
+		Log.d(TAG, id + " setVideoState: " + status);
+		myHandler.sendMessage(myHandler.obtainMessage(TYPE_VIDEO_STATUS, 0, 0, new MediaPlayerState(id, status)));
+	}
+	
+	public void setAudioState(String id, int status){
+		Log.d(TAG, id + " setAudioState: " + status);
+		myHandler.sendMessage(myHandler.obtainMessage(TYPE_AUDIO_STATUS, 0, 0, new MediaPlayerState(id, status)));
+	}
+	
+	///////////////////////////推送视频//////////////////////////
+	/**
+	 * 开始视频推送
+	 * @param mediaUrl
+	 * @param percent 开始播放百分比
+	 */
+	public void startMediaPlayer(String mediaUrl, int percent, String id) {
+		
+		Log.d(TAG, "startMediaPlayer "+ " mediaUrl: " + mediaUrl + " percent: " + percent + " id: " + id);
+		myHandler.sendMessage(myHandler.obtainMessage(TYPE_VIDEO_START, 0, 0, new MediaPlayerArg(mediaUrl, percent, id)));
+	}
+
+	/**
+	 * 获取视频总时间长度
+	 * @return 单位毫秒
+	 */
+	public String mediaPlayerDurationGet() {
+		
+			Log.d(TAG, "mediaPlayerDurationGet: " + VideoDuration);
+			
+			return String.valueOf(VideoDuration);
+	}
+
+	/**
+	 * 获取当前播放的位置
+	 * @return 单位毫秒
+	 */
+	public String mediaPlayerPositionGet() {
+		
+			Log.d(TAG, "mediaPlayerPositionGet: " + VideoPosition);
+			
+			return String.valueOf(VideoPosition);
+	}
+	
+	/**
+	 * Seek操作
+	 * @param pos 单位秒
+	 */
+	public void seekMediaPlayer(int pos) {
+		Log.d(TAG, "seekMediaPlayer : " + pos);
+		myHandler.removeMessages(TYPE_VIDEO_PLAYORPAUSE);
+		myHandler.removeMessages(TYPE_VIDEO_SEEK_MD);
+		myHandler.removeMessages(TYPE_VIDEO_SEEK_RC);
+		myHandler.removeMessages(TYPE_VIDEO_SEEK_TS);
+		myHandler.sendMessage(myHandler.obtainMessage(TYPE_VIDEO_SEEK_MD, pos));
+	}
+
+	/**
+	 * 操作MediaPlayer
+	 * @param operateType
+	 */
+	public void operateMediaPlayer(int operateType) {
+		//Log.d(TAG, "operateMediaPlayer currentThread: " +Thread.currentThread().getId());		
+		if (videoPlayerManager != null) {
+			Log.d(TAG, "operateMediaPlayer:" + operateType);
+			switch (operateType){
+			case VideoPlayerManager.PLAY:
+				myHandler.sendEmptyMessage(TYPE_VIDEO_PLAY);
+				break;
+			case VideoPlayerManager.PAUSE:
+				myHandler.sendEmptyMessage(TYPE_VIDEO_PAUSE);
+				break;
+			case VideoPlayerManager.STOP:
+				myHandler.sendEmptyMessage(TYPE_VIDEO_STOP);
+				break;
+			case VideoPlayerManager.SEEK:
+				myHandler.sendMessage(myHandler.obtainMessage(TYPE_VIDEO_SEEK_MD, seekPos));
+				break;
+			case VideoPlayerManager.PLAY_URL:
+				myHandler.sendEmptyMessage(TYPE_PLAY_URL);
+				break;
+			default:
+				break;
+			}
+		}
+	}
+
+	
+	
+	////////////////////////////推送音频////////////////////////////
+
+	public static int gChannel;
+	public static int gFrequency;
+	public static int gSampBit;
+
+	/**
+	 * 开始音频推送
+	 * @param mChannel
+	 * @param mFrequency
+	 * @param mSampBit
+	 */
+	public void startAudioPlayer(int mChannel, int mFrequency, int mSampBit) {
+		Log.d(TAG, "startAudioPlayer:" + mChannel + " " + mFrequency + " " + mSampBit);
+
+		gChannel = mChannel;
+		gFrequency = mFrequency;
+		gSampBit = mSampBit;
+		
+		myHandler.sendEmptyMessage(TYPE_AUDIO_START);
+
+	}
+
+	/**
+	 * 接收PCM数据
+	 * @param audioData
+	 * @param offsetInBytes
+	 * @param sizeInBytes
+	 */
+	public void AudioPlayerPushData(byte[] audioData, int offsetInBytes, int sizeInBytes) {
+		if(audioData != null)
+			myHandler.sendMessage(myHandler.obtainMessage(TYPE_AUDIO_PUSH_DATA, offsetInBytes, sizeInBytes, audioData));
+	}
+
+	/**
+	 * 关闭音频推送
+	 */
+	public void closeAudioPlayer() {
+		Log.d(TAG, "closeAudioPlayer:" + playVideo);
+		
+		myHandler.sendEmptyMessage(TYPE_AUDIO_CLOSE);
+	}
+
+	/**
+	 * 设置音乐音量（0.0f - 1.0f）
+	 * @param leftVolume
+	 * @param rightVolume
+	 */
+	class Vol{
+		Vol(float l, float r){leftVol = l; rightVol = r;};
+		public float leftVol;
+		public float rightVol;
+		float getletfVol(){return leftVol;};
+		float getrightVol(){return rightVol;};
+	}
+	
+	public void setMediaVolume(float leftVolume, float rightVolume) {
+		Log.d(TAG, "setMediaVolume " + "leftVolume:" + leftVolume + "rightVolume:" + rightVolume);
+		
+		Vol vol = new Vol(leftVolume, rightVolume);
+		myHandler.sendMessage(myHandler.obtainMessage(TYPE_AUDIO_VOL, 0, 0, vol));
+	}
+
+	/**
+	 * 设置音乐的LOGO
+	 * @param audioData
+	 * @param sizeInBytes
+	 */
+	public void AudioPlayerLogo(byte[] audioData, int sizeInBytes) {
+		if (sizeInBytes > 0 && audioData != null && audioData.length > 0) {
+			Log.d(TAG, "AudioPlayerLogo");
+			
+			myHandler.sendMessage(myHandler.obtainMessage(TYPE_AUDIO_LOGO, sizeInBytes, 0, audioData));		
+		}
+	}
+
+	/**
+	 * 设置歌曲名
+	 * @param audioData
+	 * @param sizeInBytes
+	 */
+	public void AudioPlayerMinm(byte[] audioData, int sizeInBytes) {
+		Log.d(TAG, "AudioPlayerMinm");
+		myHandler.sendMessage(myHandler.obtainMessage(TYPE_AUDIO_MINM, sizeInBytes, 0, new String(audioData)));	
+	}
+
+	/**
+	 * 设置歌手
+	 * @param audioData
+	 * @param sizeInBytes
+	 */
+	public void AudioPlayerAsar(byte[] audioData, int sizeInBytes) {
+		Log.d(TAG, "AudioPlayerAsar");
+		myHandler.sendMessage(myHandler.obtainMessage(TYPE_AUDIO_ASAR, sizeInBytes, 0, new String(audioData)));	
+
+	}
+	
+	
+	
+	//////////////////////////////推送图片////////////////////////////////
+	/**
+	 * 显示推送的图片
+	 * @param picData
+	 * @param sizeInBytes
+	 */
+	public void startPictureShow(byte[] picData, int sizeInBytes) {
+		Log.d(TAG, "startPictureShow sizeInBytes: " + sizeInBytes);
+		if(sizeInBytes > 4179){
+			myHandler.sendMessage(myHandler.obtainMessage(TYPE_PIC_SHOW, sizeInBytes, 0, picData));
+		}
+		else{
+			Log.d(TAG, "startPictureShow sizeInBytes is very less.");
+		}
+	}
+
+	/**
+	 * 停止推送图片
+	 */
+	public void stopPictureShow() {
+		myHandler.sendEmptyMessage(TYPE_PIC_HIDE);
+	}
+	
+	/**
+	 * 加载库文件
+	 */
+	static {
+		System.loadLibrary("gnustl_shared");
+		System.loadLibrary("glib-2.0");
+		System.loadLibrary("gmodule-2.0");
+		System.loadLibrary("gobject-2.0");
+		System.loadLibrary("gthread-2.0");
+		System.loadLibrary("iconv_airplay");
+		System.loadLibrary("xml2");
+		System.loadLibrary("debug_utils");
+		System.loadLibrary("porting_airplay");
+		System.loadLibrary("plist-master");
+		System.loadLibrary("airplayserver");
+		System.loadLibrary("airplayjni");
+	}
+}
